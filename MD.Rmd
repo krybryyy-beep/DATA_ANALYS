@@ -1,0 +1,431 @@
+---
+title: "Raport z analizy danych w R"
+author: "Krystian Bryński"
+date: "`r Sys.Date()`"     
+output:
+  html_document:
+    toc: true               
+    toc_depth: 3          
+    number_sections: true   
+    theme: united           
+---
+# Executive Summary
+
+Zbiór danych zawiera **925 obserwacji i 21 atrybutów**, obejmujących zarówno zmienne liczbowe, jak i kategoryczne.
+
+
+## Przetwarzanie danych
+
+Wstępna analiza wykazała brakujące wartości w wielu zmiennych.  
+- W zmiennych liczbowych braki zastąpiono **medianą**.  
+- W zmiennych kategorycznych braki zastąpiono etykietą **"Unknown"**.  
+
+Po przetworzeniu danych wszystkie zmienne były kompletne i gotowe do dalszych analiz.
+
+## Szczegółowa analiza wartości atrybutów
+
+### Zmienne liczbowe
+- Sprawdzono rozkład wszystkich zmiennych liczbowych przy pomocy histogramów.  
+- Większość zmiennych ma więcej małych wartości i kilka bardzo dużych.  
+
+### Zmienne kategoryczne
+- Dla każdej zmiennej typu *character* wygenerowano tabele częstości, pokazując 10 najczęściej występujących kategorii.  
+- W większości zmiennych kategorycznych występują dominujące kategorie, które obejmują większość danych.  
+
+## Analiza korelacji zmiennych liczbowych
+
+- Większość zmiennych liczbowych wykazuje **słabe korelacje (blisko 0)**, co sugeruje, że parametry są w dużej mierze niezależne. Większość wartości mieści się w zakresie [-0.3, 0.3], co jest technicznie uznawane za słabą korelację. Niektóre zmienne wykazują korelacje średnie do wysokich (~0.4–0.62). Brak dużych bloków skorelowanych zmiennych sugeruje, że zbiór jest zrównoważony informacyjnie — każda zmienna wnosi coś unikalnego
+- Najsilniejsze powiązania między zmiennymi to głównie te, które logicznie się ze sobą wiążą, np.:  
+  - *Charge Transfer Resistance (Rct)* i *Equivalent Series Resistance (Rs)* → korelacja **0,62**.  
+  - *Lower Limit of Potential Window* i *Upper Limit of Potential Window* → korelacja **0,64**.  
+
+---
+
+### Wnioski
+
+Zbiór danych nadaje się do dalszej analizy regresji lub klasyfikacji, ponieważ większość zmiennych jest niezależna, jest dobrze przygotowany do analizy predykcyjnej.
+
+
+## Analiza predykcji właściwości materiałów
+
+W celu przewidzenia pojemności właściwej materiałów elektrody (Capacitance (F/g)) wytrenowano trzy różne modele regresyjne: Linear Regression (LM), Random Forest (RF) oraz Gradient Boosting (GBM).
+
+### Przygotowanie danych
+
+- Zbiór danych został oczyszczony i przygotowany do modelowania.
+
+- Usunięto kolumny, które mogłyby zaburzyć działanie modeli: między innymi identyfikatory (Ref), zmienne opisowe o dużej liczbie kategorii, takie jak Electrolyte Chemical Formula czy Electrode Configuration.
+
+- Kolumny kategoryczne o liczbie unikalnych wartości większej niż 50 również zostały pominięte, aby uniknąć problemów z modelami, które nie obsługują wielu poziomów kategorii.
+
+- Pozostałe zmienne przekształcono do formatu liczbowego lub czynnikowego (factor) w zależności od typu danych.
+
+- Dane podzielono na zbiór treningowy (80%) oraz testowy (20%).
+
+### Wyniki modeli 
+
+Linear Regression (LM): Model liniowy wykazał najsłabsze dopasowanie – wysokie RMSE i MAE oraz niskie R² (0.149). Sugeruje to, że zależności między cechami materiałów a pojemnością są nieliniowe.
+
+Random Forest (RF): Najlepszy model w analizie. Uzyskał najniższe RMSE i MAE oraz najwyższe R² (0.719), co wskazuje na dobre dopasowanie do danych. Model skutecznie uchwycił nieliniowe zależności oraz interakcje między zmiennymi.
+
+Gradient Boosting (GBM): Wyniki pośrednie między LM a RF. RMSE i MAE były niższe niż w LM, lecz wyższe niż w RF, R² = 0.514. Model może osiągnąć lepsze wyniki przy odpowiednim strojenie hiperparametrów.
+
+### Najważniejsze cechy
+
+- Potential.Window..V. – największy wpływ na model. Sugeruje, że zakres potencjału roboczego jest kluczowy dla przewidywań.
+
+- Electrolyte.Concentration..M. – stężenie elektrolitu silnie wpływa na wynik.
+
+- Upper/Lower Limit of Potential Window – granice okna potencjału są istotne, co ma sens fizykochemicznie.
+
+- Ratio.of.ID.IG – wskaźnik struktury materiału też ma znaczenie.
+
+Pozostałe cechy miały wyraźnie mniejsze znaczenie, co sugeruje, że proces trenowania modelu można by ograniczyć do najbardziej wpływowych zmiennych, bez istotnej utraty jakości predykcji.
+
+### Interpretacja wyników
+
+Zastosowanie metod wyjaśnialnej sztucznej inteligencji (XAI) za pomocą SHAP pozwoliło ocenić wpływ poszczególnych cech na predykcję pojemności. Spośród trzech wytrenowanych modeli najlepszym narzędziem do przewidywania pojemności materiałów okazał się Random Forest, zarówno pod względem jakości predykcji, jak i stabilności modelu. Linear Regression nie była odpowiednia ze względu na nieliniowe zależności, natomiast GBM może być konkurencyjny po dostrojeniu hiperparametrów.
+
+
+# Kod wyliczający wykorzystane biblioteki
+```{r, message=FALSE, warning=FALSE}
+# # Lista paczek
+required_packages <- c(
+  "tidyverse",   
+  "data.table",
+  "janitor",
+  "skimr",
+  "naniar",
+  "plotly",
+  "DT",
+  "knitr",
+  "rmarkdown",
+  "ggcorrplot",
+  "randomForest",
+  "iml",
+  "htmltools",
+  "caret",
+  "gbm",
+  "DALEX",
+  "DALEXtra"
+)
+
+# Ustawienie serwera CRAN
+ options(repos = c(CRAN = "https://cloud.r-project.org"))
+ 
+# # Instalacja brakujących paczek
+to_install <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
+if(length(to_install) > 0){ install.packages(to_install, dependencies = TRUE) }
+
+# Ładowanie paczek
+lapply(required_packages, library, character.only = TRUE)
+
+
+```
+# Kod zapewniający powtarzalność wyników przy każdym uruchomieniu raportu
+```{r, message=FALSE, warning=FALSE}
+
+set.seed(12345)
+```
+
+# Wczytanie danych i wstępna analiza
+
+```{r, message=FALSE, warning=FALSE}
+
+# Wczytanie danych z CSV 
+
+df <- read_csv("data/data.csv")
+
+# Podgląd pierwszych 10 wierszy
+head(df, 10)
+
+# Struktura danych
+str(df)
+
+# Podstawowe statystyki
+skimr::skim(df)
+
+# Sprawdzenie braków danych
+naniar::miss_var_summary(df)
+
+# Wyświetlenie danych w interaktywnej tabeli
+DT::datatable(df, options = list(pageLength = 10))
+```
+# Kod przetwarzający brakujące dane. 
+```{r, message=FALSE, warning=FALSE}
+
+n_before <- nrow(df)
+
+# Liczba wierszy przed przetwarzaniem danych
+cat("Liczba wierszy przed przetwarzaniem braków:", n_before, "\n")
+
+# Przetwarzanie
+# Brakujące wartości (NA) w kolumnach liczbowych zastępowane są medianą danej kolumny
+numeric_cols <- df %>% select(where(is.numeric)) %>% names()
+df[numeric_cols] <- df[numeric_cols] %>%
+mutate(across(everything(), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+
+# Przetwarzanie
+# Brakujące wartości w kolumnach tekstowych zastępowane są etykietą "Unknown"
+categorical_cols <- df %>% select(where(is.character)) %>% names()
+df[categorical_cols] <- df[categorical_cols] %>%
+mutate(across(everything(), ~ ifelse(is.na(.), "Unknown", .)))
+
+
+# Liczba wierszy po przetwarzaniu braków
+n_after <- nrow(df)
+cat("Liczba wierszy po przetwarzaniu braków:", n_after, "\n")
+
+# Ponowne sprawdzenie braków danych
+naniar::miss_var_summary(df)
+```
+# Sekcję podsumowującą rozmiar zbioru i podstawowe statystyki. 
+```{r, message=FALSE, warning=FALSE}
+
+# Liczba wierszy i kolumn
+cat("Liczba wierszy:", nrow(df), "\n")
+cat("Liczba kolumn:", ncol(df), "\n\n")
+
+# Typy kolumn
+sapply(df, class)
+
+# Liczba braków danych w całym zbiorze
+total_missing <- sum(is.na(df))
+cat("\nŁączna liczba braków danych:", total_missing, "\n")
+
+
+# Podstawowe statystyki dla zmiennych liczbowych
+df %>% 
+  select(where(is.numeric)) %>%
+  summary()
+
+# Podstawowe statystyki dla zmiennych kategorycznych (liczba unikalnych wartości)
+df %>% 
+  select(where(is.character)) %>% 
+  summarise(across(everything(), n_distinct))
+
+```
+# Szczegółową analizę wartości atrybutów. 
+```{r, message=FALSE, warning=FALSE}
+
+# Zamiana spacji w nazwach kolumn 
+names(df) <- make.names(names(df), unique = TRUE)
+
+# Rozkłady zmiennych liczbowych
+numeric_cols <- df %>% select(where(is.numeric)) %>% names()
+
+
+# Histogramy dla wszystkich zmiennych liczbowych
+for(col in numeric_cols){
+print(
+ggplot(df, aes_string(x = col)) +
+geom_histogram(bins = 30, fill = "skyblue", color = "black") +
+ggtitle(paste("Histogram:", col)) +
+theme_minimal()
+)
+}
+
+# Analiza zmiennych kategorycznych
+categorical_cols <- df %>% select(where(is.character)) %>% names()
+
+# Liczenie wartości unikalnych i wykresy słupkowe
+
+for(col in categorical_cols){
+  df_plot <- df %>%
+    group_by(across(all_of(col))) %>%
+    summarise(count = n(), .groups = "drop") %>%
+    arrange(desc(count)) %>%
+    slice(1:10)  # tylko 10 najpopularniejszych kategorii
+  
+  print(ggplot(df_plot, aes(x = reorder(!!sym(col), -count), y = count)) +
+          geom_bar(stat="identity", fill="orange") +
+          theme(axis.text.x = element_text(angle=45, hjust=1)) +
+          ggtitle(col))
+}
+```
+
+# Sekcję sprawdzającą korelacje między zmiennymi
+```{r, fig.width=12, fig.height=10}
+# Wybieramy tylko zmienne liczbowe
+numeric_cols <- df %>% select(where(is.numeric))
+# Macierz korelacji
+cor_matrix <- cor(numeric_cols, use = "complete.obs")
+# Wyświetlenie macierzy korelacji
+print(cor_matrix)
+
+# Macierz korelacji
+ggcorrplot::ggcorrplot(cor_matrix, 
+                       hc.order = TRUE,
+                       type = "lower",
+                       lab = TRUE,
+                       lab_size = 3,
+                       method="square", 
+                       colors = c("red", "white", "blue"),
+                       title="Macierz korelacji zmiennych liczbowych")
+``` 
+
+# Interaktywne wykresy
+
+```{r, message=FALSE, warning=FALSE}
+
+# Numeryczne kolumny
+numeric_cols <- df %>% select(where(is.numeric)) %>% names()
+
+plots_numeric <- list()
+for(col in numeric_cols){
+  p <- ggplot(df, aes_string(x = col)) +
+       geom_histogram(bins = 30, fill = "skyblue", color = "black") +
+       ggtitle(paste("Histogram:", col)) +
+       theme_minimal()
+  plots_numeric[[col]] <- ggplotly(p)
+}
+
+# Wyświetlanie wszystkich histogramów numerycznych
+tagList(plots_numeric)
+
+# Kategoryczne kolumny
+categorical_cols <- df %>% select(where(is.character)) %>% names()
+plots_categorical <- list()
+
+for(col in categorical_cols){
+  df_plot <- df %>%
+    group_by(across(all_of(col))) %>%
+    summarise(count = n(), .groups = "drop") %>%
+    arrange(desc(count)) %>%
+    slice(1:10)
+  
+  p <- ggplot(df_plot, aes_string(x = col, y = "count")) +
+       geom_bar(stat = "identity", fill = "orange") +
+       ggtitle(col) +
+       theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  plots_categorical[[col]] <- ggplotly(p)
+}
+
+# Wyświetlanie wszystkich wykresów kategorycznych
+tagList(plots_categorical)
+```
+
+# Analiza wpływu cech na pojemność elektrody z wykorzystaniem modeli ML
+```{r, message=FALSE, warning=FALSE}
+
+# ------------------------------
+# 1. Wybór kolumn
+# ------------------------------
+
+# Usuwamy kolumny z >50 kategoriami
+too_many_levels <- df %>%
+  select(where(is.character)) %>%
+  summarise(across(everything(), ~n_distinct(.))) %>%
+  pivot_longer(everything(), names_to = "col", values_to = "nlevels") %>%
+  filter(nlevels > 50) %>%
+  pull(col)
+
+cols_to_remove <- c(
+  "Ref",
+  "Electrolyte.Chemical.Formula",
+  "Electrode.Configuration",
+  too_many_levels
+)
+target <- "Capacitance..F.g."
+
+features <- setdiff(names(df), c(target, cols_to_remove))
+
+# ------------------------------
+# 2. Przygotowanie zbioru danych
+# ------------------------------
+
+df_model <- df %>%
+  select(all_of(c(target, features))) %>%
+  na.omit() %>%
+  mutate(across(where(is.character), as.factor))
+
+# Train/test split
+train_index <- createDataPartition(df_model[[target]], p = 0.8, list = FALSE)
+train <- df_model[train_index, ]
+test  <- df_model[-train_index, ]
+
+# ------------------------------
+# 3. MODELE
+# ------------------------------
+
+# Model 1: Linear Regression
+model_lm <- lm(as.formula(paste(target, "~ .")), data = train)
+
+# Model 2: Random Forest
+model_rf <- randomForest(
+  as.formula(paste(target, "~ .")),
+  data = train,
+  ntree = 500
+)
+
+# Model 3: Gradient Boosting (GBM)
+model_gbm <- gbm(
+  formula = as.formula(paste(target, "~ .")),
+  distribution = "gaussian",
+  data = train,
+  n.trees = 1500,
+  interaction.depth = 4,
+  shrinkage = 0.01,
+  n.minobsinnode = 10,
+  verbose = FALSE
+)
+
+# ------------------------------
+# 4. Ewaluacja
+# ------------------------------
+
+evaluate_model <- function(model, test, type = "lm") {
+  if (type == "gbm") {
+    pred <- predict(model, test, n.trees = 1500)
+  } else {
+    pred <- predict(model, test)
+  }
+  
+  rmse <- sqrt(mean((test[[target]] - pred)^2))
+  mae  <- mean(abs(test[[target]] - pred))
+  r2   <- cor(test[[target]], pred)^2
+  
+  return(c(RMSE = rmse, MAE = mae, R2 = r2))
+}
+
+results <- rbind(
+  LM  = evaluate_model(model_lm, test, "lm"),
+  RF  = evaluate_model(model_rf, test, "rf"),
+  GBM = evaluate_model(model_gbm, test, "gbm")
+)
+
+print(results)
+
+# ------------------------------
+# 5. SHAP — dla najlepszego modelu
+# ------------------------------
+
+best_model_name <- rownames(results)[which.min(results[, "RMSE"])]
+cat("Najlepszy model:", best_model_name, "\n")
+
+if (best_model_name == "LM") best_model <- model_lm
+if (best_model_name == "RF") best_model <- model_rf
+if (best_model_name == "GBM") best_model <- model_gbm
+
+explainer <- explain(
+  best_model,
+  data = train[features],
+  y = train[[target]],
+  label = best_model_name
+)
+
+# Ważność cech
+imp <- model_parts(explainer)
+plot(imp)
+
+# SHAP dla jednej obserwacji
+shap <- predict_parts(
+  explainer, 
+  new_observation = test[1, ],
+  type = "shap"
+)
+plot(shap)
+
+
+
